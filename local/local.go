@@ -1,6 +1,7 @@
 package local
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -18,7 +19,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"github.com/melbahja/goph"
-	"github.com/mholt/archiver"
+	"github.com/mholt/archiver/v4"
 	"github.com/rs/zerolog/log"
 	gossh "golang.org/x/crypto/ssh"
 )
@@ -193,19 +194,42 @@ func Locally(repo types.Repo, l types.Local, dry bool) bool {
 				}
 			}
 		}
+		if l.Compression != "" {
+			file_suffix := getCompressedArchiveSuffix(l.Compression)
 
-		if l.Zip {
 			log.Info().
 				Str("stage", "locally").
 				Str("path", l.Path).
-				Msgf("zipping %s", types.Green(repo.Name))
-			err := archiver.Archive([]string{repo.Name}, fmt.Sprintf("%s.zip", repo.Name))
+				Msgf("compressing %s", types.Green(repo.Name))
+
+			files, err := archiver.FilesFromDisk(nil, map[string]string{
+				repo.Name: "", // contents added recursively
+			})
 			if err != nil {
 				log.Warn().
 					Str("stage", "locally").
 					Str("path", l.Path).
 					Str("repo", repo.Name).Msg(err.Error())
 			}
+			out, err := os.Create(fmt.Sprintf("%s%s", repo.Name, file_suffix))
+			if err != nil {
+				log.Warn().
+					Str("stage", "locally").
+					Str("path", l.Path).
+					Str("repo", repo.Name).Msg(err.Error())
+			}
+			defer out.Close()
+
+			archiver_fmt := getArchiverFmt(l.Compression)
+
+			err = archiver_fmt.Archive(context.Background(), out, files)
+			if err != nil {
+				log.Warn().
+					Str("stage", "locally").
+					Str("path", l.Path).
+					Str("repo", repo.Name).Msg(err.Error())
+			}
+
 			err = os.RemoveAll(repo.Name)
 			if err != nil {
 				log.Warn().
@@ -225,12 +249,13 @@ func Locally(repo types.Repo, l types.Local, dry bool) bool {
 					Str("repo", repo.Name).Msg(err.Error())
 				break
 			}
+			file_suffix := getCompressedArchiveSuffix(l.Compression)
 
 			keep := []string{}
 			for _, file := range files {
 				fname := file.Name()
-				if l.Zip {
-					fname = strings.TrimSuffix(file.Name(), ".zip")
+				if l.Compression != "" {
+					fname = strings.TrimSuffix(file.Name(), file_suffix)
 				}
 				_, err := strconv.ParseInt(fname, 10, 64)
 				if err != nil {
@@ -240,7 +265,7 @@ func Locally(repo types.Repo, l types.Local, dry bool) bool {
 						Str("repo", repo.Name).
 						Msgf("couldn't parse timestamp! %s", types.Red(file.Name()))
 				}
-				if l.Zip && !strings.HasSuffix(file.Name(), ".zip") {
+				if l.Compression != "" && !strings.HasSuffix(file.Name(), file_suffix) {
 					continue
 				}
 				keep = append(keep, file.Name())
@@ -269,6 +294,36 @@ func Locally(repo types.Repo, l types.Local, dry bool) bool {
 		x = 5
 	}
 	return true
+}
+
+func getCompressedArchiveSuffix(compression string) string {
+	var file_suffix string
+
+	switch compression {
+	case "zip":
+		file_suffix = ".zip"
+	case "zstd":
+		file_suffix = ".tar.zst"
+	default:
+		file_suffix = ".zip"
+
+	}
+	return file_suffix
+}
+
+func getArchiverFmt(compression string) archiver.CompressedArchive {
+	var archiver_fmt archiver.CompressedArchive
+	switch compression {
+	case "zip":
+		archiver_fmt = archiver.CompressedArchive{Archival: archiver.Zip{}}
+	case "zstd":
+		archiver_fmt = archiver.CompressedArchive{Compression: archiver.Zstd{}, Archival: archiver.Tar{}}
+	default:
+		// Create a zip archiver as the default
+		archiver_fmt = archiver.CompressedArchive{Archival: archiver.Zip{}}
+
+	}
+	return archiver_fmt
 }
 
 func updateRepository(repoPath string, auth transport.AuthMethod, dry bool, bare bool) error {

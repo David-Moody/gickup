@@ -39,11 +39,11 @@ func (dest Destination) Count() int {
 
 // Local TODO.
 type Local struct {
-	Bare       bool   `yaml:"bare"`
-	Path       string `yaml:"path"`
-	Structured bool   `yaml:"structured"`
-	Zip        bool   `yaml:"zip"`
-	Keep       int    `yaml:"keep"`
+	Bare        bool   `yaml:"bare"`
+	Path        string `yaml:"path"`
+	Structured  bool   `yaml:"structured"`
+	Compression string `yaml:"compression"`
+	Keep        int    `yaml:"keep"`
 }
 
 // Conf TODO.
